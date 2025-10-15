@@ -11,6 +11,12 @@ class Node:
         self.id = id
         self.working = True
         self.state = 'unknown'
+        # i added:
+        self.voted = None        
+        self.Current_leader = None           
+        self.last_heartbeat = None  
+        self.candidate = False 
+        self.num_of_received_votes = set()    
 
     def start(self):
         print(f'node {self.id} started')
@@ -21,7 +27,16 @@ class Node:
             while buffer[self.id]:
                 msg_type, value = buffer[self.id].pop(0)
                 if self.working: self.deliver(msg_type,value)
-            time.sleep(0.1)
+            if self.working and self.state == 'follower':
+                current_time = time.time()
+                
+                # Here we check if we have to start election
+        
+                if self.last_heartbeat is None or (current_time - self.last_heartbeat > 1.0):
+                    if not self.candidate and self.Current_leader != self.id:
+                        self.election()
+            
+            time.sleep(0.1) 
 
     def broadcast(self, msg_type, value):
         if self.working:
@@ -39,8 +54,36 @@ class Node:
             self.working = True
 
     def deliver(self, msg_type, value):
-        pass
+   # I have to double check this 
+    if not self.working:
+        return
+    if msg_type == "heartbeat":
+        # Update leader info and heartbeat time
+        self.Current_leader = value
+        self.last_heartbeat = time.time()
+        
+        if self.state != "follower":
+            print(f"Node {self.id} now follows leader {value}")
+            self.state = "follower"
+            self.candidate = False
+            self.voted = None
 
+    elif msg_type == "candidacy":
+        candidate_id = value
+
+        
+        if self.voted is None:
+            self.voted = candidate_id
+            print(f"Node {self.id} votes for node {candidate_id}")
+            self.broadcast("vote", (self.id, candidate_id))
+
+    elif msg_type == "vote":
+        voter_id, candidate_id = value
+        
+        if self.candidate and candidate_id == self.id:
+            self.num_of_received_votes.add(voter_id)
+def election(self):
+#  i still need to implement this 
 def initialize(N):
     global nodes
     nodes = [Node(i) for i in range(N)]

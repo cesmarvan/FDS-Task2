@@ -34,7 +34,7 @@ class Node:
             buffer[self.id] = []
     
     def recover(self):
-        if self.working:
+        if not self.working:
             buffer[self.id] = []
             self.working = True
 
@@ -59,7 +59,7 @@ if __name__ == "__main__":
             if 0<= id and id<N: nodes[id].crash()
         elif act == 'recover' : 
             id = int(input('\tid > '))
-            if 0<= id and id<N: nodes[id].crash()
+            if 0<= id and id<N: nodes[id].recover()
         elif act == 'state':
             for node in nodes:
                 print(f'\t\tnode {node.id}: {node.state}')

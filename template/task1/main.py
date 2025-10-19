@@ -24,7 +24,7 @@ class Node:
 
     def start(self):
         print(f'node {self.id} started')
-        threading.Thread(target=self.run).start()
+        threading.Thread(target=self.run, daemon=True).start()
 
     def run(self):
         while True:
@@ -32,40 +32,51 @@ class Node:
                 msg_type, value = buffer[self.id].pop(0)
                 if self.working:
                     self.deliver(msg_type, value)
-            if self.working and self.state == 'follower':
-                current_time = time.time()
 
-                # Here we check if we have to start election
-                if self.last_heartbeat is None or (current_time - self.last_heartbeat > 1.0):
+            # If a follower doesn't get a heartbeat for 1 second then start election
+            if self.working and self.state == 'follower':
+                now = time.time()
+                if self.last_heartbeat is None or (now - self.last_heartbeat > 1.0):
                     if not self.candidate and self.current_leader != self.id:
                         self.election()
 
-            time.sleep(0.1)
+            # When leader, send heartbeat
+            if self.working and self.state == 'leader':
+                self.broadcast("heartbeat", self.id)
+                time.sleep(0.5)
+
+            time.sleep(0.05)
 
     def broadcast(self, msg_type, value):
         if self.working:
             for node in nodes:
-                buffer[node.id].append((msg_type, value))
+                if node.id != self.id:  # don't send the message to yourself
+                    buffer[node.id].append((msg_type, value))
 
     def crash(self):
         if self.working:
+            #Everything has to be None, False or empty so when recovering we don't have past values
             self.working = False
             buffer[self.id] = []
             self.state = 'crashed'
+            self.current_leader = None
+            self.last_heartbeat = None
+            self.num_of_received_votes.clear()
+            self.candidate = False
 
     def recover(self):
         if not self.working:
             buffer[self.id] = []
             self.working = True
             self.state = 'follower'
-            self.last_heartbeat = 0.0
+            self.last_heartbeat = None
 
     def deliver(self, msg_type, value):
-        # I have to double check this
         if not self.working:
             return
+
         if msg_type == "heartbeat":
-            # Update leader info and heartbeat time
+            # Update leader and the moment when the HB is received
             self.current_leader = value
             self.last_heartbeat = time.time()
 
@@ -77,15 +88,16 @@ class Node:
 
         elif msg_type == "candidacy":
             candidate_id = value
-            # if node receives another candidacy message before the waiting time ends then cancel candidacy
-            if self.state == 'candidate' and time.time() < self.wait_until and candidate_id != self.id:
-                print(f'candidacy of node {self.id} aborted')
+            # If while waiting for your candidacy to go through the waiting time you receive another candidacy message --> Abort your candidacy
+            if self.state == 'candidate' and candidate_id != self.id:
+                print(f'candidacy of node {self.id} aborted due to node {candidate_id}')
                 self.state = 'follower'
                 self.wait_until = None
                 self.candidate = False
                 self.election_timeout = None
                 self.voted = None
 
+            # If the node hasn't voted yet, vote for the candidate. 
             if self.voted is None:
                 self.voted = candidate_id
                 print(f"Node {self.id} votes for node {candidate_id}")
@@ -97,50 +109,54 @@ class Node:
                 self.num_of_received_votes.add(voter_id)
 
     def election(self):
-        # Update state to candidate and clear all variables related to election
+        # Change state to candidate
         self.state = 'candidate'
         self.current_leader = None
         self.voted = None
         self.num_of_received_votes.clear()
         self.candidate = True
 
-        # wait between 1 and 3 seconds for other candidacy messages
         self.wait_until = time.time() + random.uniform(1.0, 3.0)
         print(f'node {self.id} started an election')
 
-        start_wait = time.time()
+        # We wait randomly between 1 and 3 seconds while listening to possible messages being sent
         while self.wait_until and time.time() < self.wait_until:
-            # we make it possible to recieve messages while waiting
             if buffer[self.id]:
                 msg_type, value = buffer[self.id].pop(0)
                 self.deliver(msg_type, value)
             time.sleep(0.05)
 
-        if self.working and time.time() and self.wait_until is not None:
-            if time.time() >= self.wait_until:
-                # send candidacy message and vote for yourself
-                self.broadcast('candidacy', self.id)
-                print(f'node {self.id} sent a candidacy message')
-                self.voted = self.id
-                self.num_of_received_votes = {self.id}
-                self.election_timeout = time.time() + 2.0
-                while time.time() < self.election_timeout:
-                    time.sleep(0.05)
+        # Broadcast the candidacy message and vote for yourself
+        if self.working and self.state == 'candidate':
+            self.broadcast('candidacy', self.id)
+            print(f'node {self.id} sent a candidacy message')
+            self.voted = self.id
+            self.num_of_received_votes = {self.id}
+            self.election_timeout = time.time() + 2.0
 
-            if self.election_timeout is not None and len(self.num_of_received_votes) > len(nodes) / 2:
-                if time.time() >= self.election_timeout:
-                    print(f'node {self.id} is now the leader')
+            # Wait for other nodes to vote
+            while self.election_timeout is not None and time.time() < self.election_timeout:
+                if buffer[self.id]:
+                    msg_type, value = buffer[self.id].pop(0)
+                    self.deliver(msg_type, value)
+
+                # If you have more than half the votes then the node gets to be the leader
+                if len(self.num_of_received_votes) > len(nodes) // 2:
+                    print(f'node {self.id} is now the leader with {len(self.num_of_received_votes)} votes')
                     self.state = 'leader'
-                    self.election_timeout = None
                     self.current_leader = self.id
-                    self.last_heartbeat = 0.0
-            # if you don't win the election then clear election variables and change state back to follower
-            else:
-                self.state = 'follower'
-                self.voted = None
-                self.num_of_received_votes.clear()
-                self.election_timeout = None
-                self.last_heartbeaet = None
+                    self.last_heartbeat = time.time()
+                    self.election_timeout = None
+                    return
+                time.sleep(0.05)
+
+            # When the candidate doesn't have enough votes then state goes back to follower
+            print(f'node {self.id} failed election ({len(self.num_of_received_votes)} votes)')
+            self.state = 'follower'
+            self.voted = None
+            self.num_of_received_votes.clear()
+            self.election_timeout = None
+            self.last_heartbeat = None
 
 
 def initialize(N):
@@ -159,11 +175,11 @@ if __name__ == "__main__":
         act = input('\t$ ')
         if act == 'crash':
             id = int(input('\tid > '))
-            if 0 <= id and id < N:
+            if 0 <= id < N:
                 nodes[id].crash()
         elif act == 'recover':
             id = int(input('\tid > '))
-            if 0 <= id and id < N:
+            if 0 <= id < N:
                 nodes[id].recover()
         elif act == 'state':
             for node in nodes:

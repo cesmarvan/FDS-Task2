@@ -140,7 +140,8 @@ class Node:
                 self.voted = None
                 self.num_of_received_votes.clear()
                 self.election_timeout = None
-                self.last_heartbeaet = None
+                #self.last_heartbeaet = None -- the typo
+                self.last_heartbeat = None
 
 
 def initialize(N):

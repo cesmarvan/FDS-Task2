@@ -77,11 +77,14 @@ class Node:
 
         if msg_type == "heartbeat":
             # Update leader and the moment when the HB is received
-            self.current_leader = value
+            if self.current_leader != value:
+                self.current_leader = value
+                if self.state == "follower":
+                    print(f"node {self.id} got a heartbeat and followed node {value} as leader")
             self.last_heartbeat = time.time()
+            
 
             if self.state != "follower":
-                print(f"Node {self.id} now follows leader {value}")
                 self.state = "follower"
                 self.candidate = False
                 self.voted = None
@@ -90,17 +93,17 @@ class Node:
             candidate_id = value
             # If while waiting for your candidacy to go through the waiting time you receive another candidacy message --> Abort your candidacy
             if self.state == 'candidate' and candidate_id != self.id:
-                print(f'candidacy of node {self.id} aborted due to node {candidate_id}')
                 self.state = 'follower'
                 self.wait_until = None
                 self.candidate = False
                 self.election_timeout = None
+                print(f"node {self.id} voted to node {candidate_id}")
                 self.voted = None
 
             # If the node hasn't voted yet, vote for the candidate. 
             if self.voted is None:
                 self.voted = candidate_id
-                print(f"Node {self.id} votes for node {candidate_id}")
+                print(f"node {self.id} voted to node {candidate_id}")
                 self.broadcast("vote", (self.id, candidate_id))
 
         elif msg_type == "vote":
@@ -117,7 +120,7 @@ class Node:
         self.candidate = True
 
         self.wait_until = time.time() + random.uniform(1.0, 3.0)
-        print(f'node {self.id} started an election')
+        print(f'node {self.id} is starting an election')
 
         # We wait randomly between 1 and 3 seconds while listening to possible messages being sent
         while self.wait_until and time.time() < self.wait_until:
@@ -129,7 +132,6 @@ class Node:
         # Broadcast the candidacy message and vote for yourself
         if self.working and self.state == 'candidate':
             self.broadcast('candidacy', self.id)
-            print(f'node {self.id} sent a candidacy message')
             self.voted = self.id
             self.num_of_received_votes = {self.id}
             self.election_timeout = time.time() + 2.0
@@ -142,16 +144,15 @@ class Node:
 
                 # If you have more than half the votes then the node gets to be the leader
                 if len(self.num_of_received_votes) > len(nodes) // 2:
-                    print(f'node {self.id} is now the leader with {len(self.num_of_received_votes)} votes')
                     self.state = 'leader'
                     self.current_leader = self.id
                     self.last_heartbeat = time.time()
-                    self.election_timeout = None
+                    self.election_timeout = None 
+                    print(f'node {self.id} detected node {self.current_leader} as leader')
                     return
                 time.sleep(0.05)
 
             # When the candidate doesn't have enough votes then state goes back to follower
-            print(f'node {self.id} failed election ({len(self.num_of_received_votes)} votes)')
             self.state = 'follower'
             self.voted = None
             self.num_of_received_votes.clear()
